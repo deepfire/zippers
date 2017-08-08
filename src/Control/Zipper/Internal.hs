@@ -370,7 +370,7 @@ type instance Zipped (Zipper h i a) s = Zipped h a
 -- This is part of the internal structure of a 'Zipper'. You shouldn't need to manipulate this directly.
 #ifndef HLINT
 data Coil t i a where
-  Coil :: Coil Top Int a
+  Coil :: Ord i => i -> Coil Top i a
   Snoc :: Ord i => !(Coil h j s) -> AnIndexedTraversal' i s a -> Int -> !Int -> !(Path j s) -> j -> (Jacket i a -> s) -> Coil (Zipper h j s) i a
 #endif
 
@@ -381,8 +381,13 @@ focus f (Zipper h t o p i a) = Zipper h t o p i <$> indexed f i a
 
 -- | Construct a 'Zipper' that can explore anything, and start it at the 'Top'.
 zipper :: a -> Top :>> a
-zipper = Zipper Coil 0 0 Start 0
+zipper = Zipper (Coil 0) 0 0 Start 0
 {-# INLINE zipper #-}
+
+-- | Like 'zipper', but enable indices other than 'Int'.
+zipper' :: Ord i => i -> a -> Zipper Top i a
+zipper' i = Zipper (Coil i) 0 0 Start i
+{-# INLINE zipper' #-}
 
 -- | Return the index of the focus.
 focalPoint :: Zipper h i a -> i
@@ -779,8 +784,8 @@ class Zipping h a where
   recoil :: Coil h i a -> Jacket i a -> Zipped h a
 
 instance Zipping Top a where
-  recoil Coil (Leaf _ a) = a
-  recoil Coil _ = error "recoil: expected Leaf"
+  recoil (Coil _) (Leaf _ a) = a
+  recoil (Coil _) _ = error "recoil: expected Leaf"
   {-# INLINE recoil #-}
 
 instance Zipping h s => Zipping (Zipper h i s) a where
@@ -843,20 +848,20 @@ unsafelyRestoreTape (Tape h n) = unsafelyRestoreTrack h >>> moveToward n
 
 -- | This is used to peel off the path information from a 'Coil' for use when saving the current path for later replay.
 peel :: Coil h i a -> Track h i a
-peel Coil             = Track
+peel (Coil i)             = Track i
 peel (Snoc h l _ _ _ i _) = Fork (peel h) i l
 {-# INLINE peel #-}
 
 -- | The 'Track' forms the bulk of a 'Tape'.
 data Track t i a where
-  Track :: Track Top Int a
+  Track :: Ord i => i -> Track Top i a
   Fork  :: Ord i => Track h j s -> j -> AnIndexedTraversal' i s a -> Track (Zipper h j s) i a
 
 -- | Restore ourselves to a previously recorded position precisely.
 --
 -- If the position does not exist, then fail.
 restoreTrack :: MonadPlus m => Track h i a -> Zipped h a -> m (Zipper h i a)
-restoreTrack Track        = return . zipper
+restoreTrack (Track i)    = return . (zipper' i)
 restoreTrack (Fork h n l) = restoreTrack h >=> moveTo n >=> iwithin l
 
 -- | Restore ourselves to a location near our previously recorded position.
@@ -864,7 +869,7 @@ restoreTrack (Fork h n l) = restoreTrack h >=> moveTo n >=> iwithin l
 -- When moving 'leftward' to 'rightward' through a 'Traversal', if this will clamp at each level to the range @0 '<=' k '<' 'teeth'@,
 -- so the only failures will occur when one of the sequence of downward traversals find no targets.
 restoreNearTrack :: MonadPlus m => Track h i a -> Zipped h a -> m (Zipper h i a)
-restoreNearTrack Track        = return . zipper
+restoreNearTrack (Track i)    = return . (zipper' i)
 restoreNearTrack (Fork h n l) = restoreNearTrack h >=> moveToward n >>> iwithin l
 
 -- | Restore ourselves to a previously recorded position.
@@ -875,6 +880,6 @@ restoreNearTrack (Fork h n l) = restoreNearTrack h >=> moveToward n >>> iwithin 
 --
 -- Violate these assumptions at your own risk!
 unsafelyRestoreTrack :: Track h i a -> Zipped h a -> Zipper h i a
-unsafelyRestoreTrack Track = zipper
+unsafelyRestoreTrack (Track i) = zipper' i
 unsafelyRestoreTrack (Fork h n l) = unsafelyRestoreTrack h >>> moveToward n >>> ifromWithin l
 
